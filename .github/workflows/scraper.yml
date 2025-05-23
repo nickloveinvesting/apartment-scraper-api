@@ -1,0 +1,65 @@
+name: Apartment Scraper API
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: 'Comma-separated apartment URLs'
+        required: true
+        type: string
+  repository_dispatch:
+    types: [scrape-apartments]
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Run Apartment Scraper
+        run: node scraper.js
+        env:
+          URLS: ${{ github.event.inputs.urls || github.event.client_payload.urls }}
+          
+      - name: Upload Results as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apartment-data-${{ github.run_number }}
+          path: results.json
+          retention-days: 30
+          
+      - name: Create Issue with Results (Optional)
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('results.json', 'utf8'));
+            
+            const body = `## Scraping Results
+            
+            **Total Properties:** ${results.metadata.totalProperties}
+            **Scraped At:** ${results.metadata.scrapedAt}
+            
+            ### Summary:
+            ${results.properties.map(p => `- **${p.name}**: ${p.totalAmenities} amenities`).join('\n')}
+            
+            [Download Full Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Scraping Results - ${new Date().toISOString().split('T')[0]}`,
+              body: body,
+              labels: ['scraper-results']
+            });
